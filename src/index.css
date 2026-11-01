@@ -1,0 +1,135 @@
+@import "tailwindcss";
+
+/* Leaflet Custom Marker & Popup Adjustments */
+.custom-city-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
+.leaflet-popup-content-wrapper {
+  border-radius: 14px !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1) !important;
+  padding: 4px !important;
+  border: 1px solid #e2e8f0 !important;
+}
+
+.leaflet-popup-content {
+  margin: 10px 12px !important;
+  line-height: 1.4 !important;
+}
+
+.leaflet-container {
+  font-family: inherit !important;
+}
+
+/* Print Optimization for PDF Export */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 10mm;
+  }
+
+  *, *:before, *:after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    text-shadow: none !important;
+  }
+
+  html, body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    height: auto !important;
+    min-height: auto !important;
+  }
+
+  /* When printing from modal, neutralize modal overlay and backdrop */
+  .fixed.inset-0,
+  [class*="backdrop-blur"],
+  [class*="bg-slate-900"] {
+    position: static !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+  }
+
+  /* Neutralize modal dialog card wrapper */
+  .max-w-5xl,
+  .max-h-\[95vh\],
+  .rounded-2xl.shadow-2xl {
+    max-width: 100% !important;
+    max-height: none !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Hide app header, nav, floating bars, modal buttons */
+  header,
+  nav,
+  .print\:hidden,
+  button {
+    display: none !important;
+  }
+
+  #itinerary-pdf-printable-area {
+    padding: 0 !important;
+    margin: 0 auto !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    background: #ffffff !important;
+  }
+
+  /* Page break rules for clean A4 printing without cuts */
+  .pdf-map-section {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    margin-bottom: 12px !important;
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+
+  .pdf-summary-table-section {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    page-break-before: always !important;
+    break-before: page !important;
+    margin-top: 0 !important;
+  }
+
+  .pdf-day-card {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    margin-bottom: 12px !important;
+  }
+
+  .pdf-notes-section {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* Prevent page breaks inside cards, tables and canvas */
+  table,
+  tr,
+  svg,
+  canvas {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+}
+

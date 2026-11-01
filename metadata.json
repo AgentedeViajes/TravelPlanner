@@ -1,0 +1,6 @@
+{
+  "name": "Travel Planner",
+  "description": "Diseñador y creador profesional de itinerarios turísticos con mapa interactivo 2D, transporte, alojamientos, excursiones y exportación a PDF para Tresor Travel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
