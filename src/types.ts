@@ -40,6 +40,8 @@ export interface CityStop {
   transferOutNotes: string;
   // Excursiones (campo libre o lista)
   excursions: string[];
+  // Sugerencias no confirmadas; no se incluyen en las jornadas hasta seleccionarlas.
+  excursionSuggestions?: string[];
   // Descripción de la ciudad para el primer día
   cityDescription: string;
   // Conexión hacia la siguiente ciudad (aplica si no es la última)
@@ -83,6 +85,9 @@ export interface ItineraryDay {
     targetCityName?: string;
   };
   internationalFlightNote?: string;
+  // Marca descripciones modificadas desde el editor manual.
+  descriptionEditedManually?: boolean;
+  titleEditedManually?: boolean;
 }
 
 export interface TravelItinerary {

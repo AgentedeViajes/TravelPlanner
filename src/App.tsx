@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { TravelItinerary, CityStop, ItineraryDay } from './types';
 import { INITIAL_ITINERARY, PATAGONIA_ITINERARY } from './data/defaultItineraries';
-import { generateItineraryDays } from './utils/itineraryGenerator';
+import { generateItineraryDays, hasDayStructureDrift, hasStructuralStopChanges, inferManualDayEdits, syncExistingDaysWithStops } from './utils/itineraryGenerator';
 import { TresorLogo } from './components/TresorLogo';
 import { GeneralInfoCard } from './components/GeneralInfoCard';
 import { CityStopsList } from './components/CityStopsList';
@@ -38,7 +38,8 @@ export default function App() {
     const saved = localStorage.getItem('travel_planner_active_itinerary');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const restored = JSON.parse(saved) as TravelItinerary;
+        return inferManualDayEdits(restored);
       } catch (e) {
         console.error('Error parsing saved itinerary', e);
       }
@@ -58,19 +59,26 @@ export default function App() {
 
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
   const [selectedCityIdOnMap, setSelectedCityIdOnMap] = useState<string | null>(null);
+  const [hasPendingStructuralChanges, setHasPendingStructuralChanges] = useState(false);
 
   // Auto-save to localStorage
   useEffect(() => {
     localStorage.setItem('travel_planner_active_itinerary', JSON.stringify(itinerary));
   }, [itinerary]);
 
+  useEffect(() => {
+    if (hasDayStructureDrift(itinerary)) setHasPendingStructuralChanges(true);
+  }, []);
+
   // Partial update of general itinerary info
   const handleUpdateGeneral = (updatedFields: Partial<TravelItinerary>) => {
     setItinerary(prev => {
       const next = { ...prev, ...updatedFields };
-      // If start date changed, update days dates
+      // Only update dates in place; preserve manual narratives and edits.
       if (updatedFields.startDate !== undefined) {
-        next.days = generateItineraryDays(next);
+        const dateOnlyDays = generateItineraryDays(next);
+        const datesById = new Map(dateOnlyDays.map(day => [day.id, day.dateStr]));
+        next.days = prev.days.map(day => ({ ...day, dateStr: datesById.get(day.id) || day.dateStr }));
       }
       return next;
     });
@@ -78,6 +86,13 @@ export default function App() {
 
   // Add / Save a City Stop
   const handleSaveStop = (savedStop: CityStop) => {
+    const currentIndex = itinerary.stops.findIndex(stop => stop.id === savedStop.id);
+    const prospectiveStops = [...itinerary.stops];
+    if (currentIndex >= 0) prospectiveStops[currentIndex] = savedStop;
+    else prospectiveStops.push(savedStop);
+    if (currentIndex < 0 || hasStructuralStopChanges(itinerary.stops, prospectiveStops)) {
+      setHasPendingStructuralChanges(true);
+    }
     setItinerary(prev => {
       const existingIndex = prev.stops.findIndex(s => s.id === savedStop.id);
       let nextStops = [...prev.stops];
@@ -89,7 +104,7 @@ export default function App() {
       }
 
       const updated = { ...prev, stops: nextStops };
-      updated.days = generateItineraryDays(updated);
+      updated.days = existingIndex < 0 ? prev.days : syncExistingDaysWithStops(updated, prev.stops);
       return updated;
     });
   };
@@ -97,16 +112,20 @@ export default function App() {
   // Delete a City Stop
   const handleDeleteStop = (stopId: string) => {
     if (!window.confirm('¿Está seguro de eliminar esta ciudad del itinerario?')) return;
+    setHasPendingStructuralChanges(true);
     setItinerary(prev => {
       const nextStops = prev.stops.filter(s => s.id !== stopId);
       const updated = { ...prev, stops: nextStops };
-      updated.days = generateItineraryDays(updated);
+      updated.days = syncExistingDaysWithStops(updated, prev.stops);
       return updated;
     });
   };
 
   // Move stops up/down
   const handleMoveStop = (index: number, direction: 'up' | 'down') => {
+    const prospectiveIndex = direction === 'up' ? index - 1 : index + 1;
+    if (prospectiveIndex < 0 || prospectiveIndex >= itinerary.stops.length) return;
+    setHasPendingStructuralChanges(true);
     setItinerary(prev => {
       const targetIndex = direction === 'up' ? index - 1 : index + 1;
       if (targetIndex < 0 || targetIndex >= prev.stops.length) return prev;
@@ -117,7 +136,7 @@ export default function App() {
       nextStops[targetIndex] = temp;
 
       const updated = { ...prev, stops: nextStops };
-      updated.days = generateItineraryDays(updated);
+      updated.days = syncExistingDaysWithStops(updated, prev.stops);
       return updated;
     });
   };
@@ -132,11 +151,16 @@ export default function App() {
 
   // Regenerate days automatically from stops
   const handleRegenerateDays = () => {
-    if (window.confirm('¿Desea regenerar el cronograma día por día en base a las ciudades y noches actuales? Se actualizarán los textos.')) {
+    const hasManualEdits = itinerary.days.some(day => day.descriptionEditedManually || day.titleEditedManually);
+    const message = hasManualEdits
+      ? 'La regeneración reemplazará las jornadas actuales, incluidos los títulos y textos editados manualmente. ¿Desea continuar?'
+      : '¿Desea regenerar el cronograma día por día en base a las ciudades y noches actuales? Se reemplazarán las jornadas actuales.';
+    if (window.confirm(message)) {
       setItinerary(prev => ({
         ...prev,
         days: generateItineraryDays(prev),
       }));
+      setHasPendingStructuralChanges(false);
     }
   };
 
@@ -144,12 +168,14 @@ export default function App() {
   const handleLoadEuropeDemo = () => {
     if (window.confirm('¿Cargar plantilla de demostración "Europa Soñada (11 Días)"?')) {
       setItinerary(INITIAL_ITINERARY);
+      setHasPendingStructuralChanges(false);
     }
   };
 
   const handleLoadPatagoniaDemo = () => {
     if (window.confirm('¿Cargar plantilla de demostración "Patagonia Austral (7 Días)"?')) {
       setItinerary(PATAGONIA_ITINERARY);
+      setHasPendingStructuralChanges(false);
     }
   };
 
@@ -171,6 +197,7 @@ export default function App() {
         days: [],
       };
       setItinerary(blank);
+      setHasPendingStructuralChanges(false);
     }
   };
 
@@ -518,6 +545,11 @@ export default function App() {
         {/* TAB 3: Itinerario Día por Día */}
         {activeTab === 'timeline' && (
           <div className="space-y-6">
+            {hasPendingStructuralChanges && (
+              <div role="status" className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-900">
+                Cambió la cantidad de noches o el orden de las ciudades. Las jornadas actuales se conservaron; revise fechas y conexiones, y use «Regenerar desde Ciudades» si desea reconstruir su estructura.
+              </div>
+            )}
             <DailyItineraryTimeline
               days={itinerary.days}
               onEditDay={(day) => {

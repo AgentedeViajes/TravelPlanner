@@ -100,7 +100,8 @@ export const CityStopEditorModal: React.FC<CityStopEditorModalProps> = ({
         lat: preset.lat,
         lng: preset.lng,
         cityDescription: preset.description,
-        excursions: prev.excursions.length === 0 ? preset.popularExcursions.slice(0, 2) : prev.excursions,
+        excursions: prev.excursions,
+        excursionSuggestions: preset.popularExcursions.filter(exc => !prev.excursions.includes(exc)),
       }));
     } else {
       setFormData(prev => ({ ...prev, cityName }));
@@ -174,23 +175,23 @@ export const CityStopEditorModal: React.FC<CityStopEditorModalProps> = ({
         if (Array.isArray(data.excursions) && data.excursions.length > 0) {
           // Merge unique excursions
           setFormData(prev => {
-            const combined = [...prev.excursions];
+            const combined = [...(prev.excursionSuggestions || [])];
             data.excursions.forEach((item: string) => {
               if (!combined.includes(item)) combined.push(item);
             });
-            return { ...prev, excursions: combined };
+            return { ...prev, excursionSuggestions: combined };
           });
         }
       } else {
         const preset = findCityPreset(formData.cityName);
         if (preset && preset.popularExcursions) {
-          setFormData(prev => ({ ...prev, excursions: [...prev.excursions, ...preset.popularExcursions.slice(0, 3)] }));
+          setFormData(prev => ({ ...prev, excursionSuggestions: [...new Set([...(prev.excursionSuggestions || []), ...preset.popularExcursions])].filter(exc => !prev.excursions.includes(exc)) }));
         }
       }
     } catch (e) {
       const preset = findCityPreset(formData.cityName);
       if (preset && preset.popularExcursions) {
-        setFormData(prev => ({ ...prev, excursions: [...prev.excursions, ...preset.popularExcursions.slice(0, 3)] }));
+        setFormData(prev => ({ ...prev, excursionSuggestions: [...new Set([...(prev.excursionSuggestions || []), ...preset.popularExcursions])].filter(exc => !prev.excursions.includes(exc)) }));
       }
     } finally {
       setIsGeneratingExcursions(false);
@@ -534,16 +535,20 @@ export const CityStopEditorModal: React.FC<CityStopEditorModalProps> = ({
             </div>
 
             {/* Quick popular excursions suggestions */}
-            {currentPreset && currentPreset.popularExcursions.length > 0 && (
+            {((formData.excursionSuggestions?.length || 0) > 0 || (currentPreset && currentPreset.popularExcursions.length > 0)) && (
               <div className="flex flex-wrap items-center gap-1.5 pt-1">
                 <span className="text-[11px] font-semibold text-slate-500">Sugerencias:</span>
-                {currentPreset.popularExcursions.map(exc => (
+                {(formData.excursionSuggestions?.length ? formData.excursionSuggestions : currentPreset?.popularExcursions || []).map(exc => (
                   <button
                     key={exc}
                     type="button"
                     onClick={() => {
                       if (!formData.excursions.includes(exc)) {
-                        setFormData(p => ({ ...p, excursions: [...p.excursions, exc] }));
+                        setFormData(p => ({
+                          ...p,
+                          excursions: [...p.excursions, exc],
+                          excursionSuggestions: (p.excursionSuggestions || []).filter(item => item !== exc),
+                        }));
                       }
                     }}
                     className="text-[10.5px] bg-slate-100 hover:bg-rose-50 hover:text-[#b91c3e] text-slate-700 px-2 py-0.5 rounded-md border border-slate-200 transition-colors"

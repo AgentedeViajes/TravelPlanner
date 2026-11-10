@@ -96,7 +96,7 @@ export const DayEditorModal: React.FC<DayEditorModalProps> = ({
               type="text"
               required
               value={formData.title}
-              onChange={e => setFormData(p => p ? ({ ...p, title: e.target.value }) : null)}
+              onChange={e => setFormData(p => p ? ({ ...p, title: e.target.value, titleEditedManually: true }) : null)}
               className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 font-semibold focus:outline-none focus:ring-2 focus:ring-[#b91c3e]"
             />
           </div>
@@ -140,7 +140,7 @@ export const DayEditorModal: React.FC<DayEditorModalProps> = ({
               rows={5}
               required
               value={formData.description}
-              onChange={e => setFormData(p => p ? ({ ...p, description: e.target.value }) : null)}
+              onChange={e => setFormData(p => p ? ({ ...p, description: e.target.value, descriptionEditedManually: true }) : null)}
               className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-[#b91c3e] leading-relaxed"
             />
           </div>

@@ -32,6 +32,111 @@ export const ACCOMMODATION_LABELS: Record<AccommodationCategory, string> = {
   'special': 'Alojamiento Seleccionado Especial',
 };
 
+/**
+ * Synchronizes city-derived fields without rebuilding or replacing day narratives.
+ * Structural changes (night count/order) are intentionally handled by explicit regeneration.
+ */
+export function syncExistingDaysWithStops(itinerary: TravelItinerary, previousStops: CityStop[] = []): ItineraryDay[] {
+  const stopById = new Map(itinerary.stops.map(stop => [stop.id, stop]));
+  const previousStopById = new Map(previousStops.map(stop => [stop.id, stop]));
+  const stopIndexById = new Map(itinerary.stops.map((stop, index) => [stop.id, index]));
+  const hasStructuralChanges = hasStructuralStopChanges(previousStops, itinerary.stops);
+  const previousGenerated = previousStops.length > 0 && !hasStructuralChanges
+    ? new Map(generateItineraryDays({ ...itinerary, stops: previousStops }).map(day => [day.id, day]))
+    : new Map<string, ItineraryDay>();
+  const updatedGenerated = !hasStructuralChanges
+    ? new Map(generateItineraryDays(itinerary).map(day => [day.id, day]))
+    : new Map<string, ItineraryDay>();
+  const syncedDays = itinerary.days.map(day => {
+    const stop = stopById.get(day.cityId);
+    if (!stop) return day;
+
+    const stopIndex = stopIndexById.get(stop.id) ?? -1;
+    const nextStop = stopIndex >= 0 ? itinerary.stops[stopIndex + 1] : undefined;
+    // Update generated copy only when it still exactly matches the previous generated version.
+    const oldGeneratedDay = previousGenerated.get(day.id);
+    const newGeneratedDay = updatedGenerated.get(day.id);
+    const isGeneratedTitle = Boolean(oldGeneratedDay && oldGeneratedDay.title === day.title);
+    const isGeneratedDescription = Boolean(oldGeneratedDay && oldGeneratedDay.description === day.description);
+    const title = isGeneratedTitle && newGeneratedDay ? newGeneratedDay.title : day.title;
+    const description = isGeneratedDescription && newGeneratedDay ? newGeneratedDay.description : day.description;
+
+    const isDepartureDay = day.id.endsWith('-final');
+    const transportToNext = !isDepartureDay && day.isCityLastDay && nextStop
+      ? { type: stop.transportToNext, notes: stop.transportNotes || undefined, targetCityName: nextStop.cityName }
+      : undefined;
+
+    const previousStopData = previousStopById.get(stop.id);
+    const keptExcursions = previousStopData
+      ? day.excursions.filter(exc => stop.excursions.includes(exc) || !previousStopData.excursions.includes(exc))
+      : day.excursions;
+    const hadSelectedExcursionRemoved = previousStopData
+      ? day.excursions.some(exc => previousStopData.excursions.includes(exc) && !stop.excursions.includes(exc))
+      : false;
+
+    return {
+      ...day,
+      cityName: stop.cityName,
+      country: stop.country,
+      title,
+      description,
+      accommodationCategory: stop.accommodationCategory,
+      hotelName: stop.hotelName || '',
+      mealPlan: stop.mealPlan,
+      hasTransferIn: day.isCityFirstDay && stop.transferIn,
+      transferInNotes: stop.transferInNotes || undefined,
+      hasTransferOut: day.isCityLastDay && stop.transferOut,
+      transferOutNotes: stop.transferOutNotes || undefined,
+      transportToNext,
+      excursions: keptExcursions,
+      isFreeDay: keptExcursions.length === 0 && (day.isFreeDay || hadSelectedExcursionRemoved),
+    };
+  });
+
+  // Add newly selected excursions to available days without replacing any narrative text.
+  for (const stop of itinerary.stops) {
+    const previousStop = previousStopById.get(stop.id);
+    if (!previousStop) continue;
+    const addedExcursions = stop.excursions.filter(exc => !previousStop.excursions.includes(exc));
+    const stopDays = syncedDays.filter(day => day.cityId === stop.id && !day.id.endsWith('-final'));
+    const availableDays = stopDays.filter(day => !day.isCityFirstDay || stop.nights === 1);
+    addedExcursions.forEach((excursion, index) => {
+      if (availableDays.length === 0) return;
+      const targetDay = availableDays[index % availableDays.length];
+      if (!targetDay.excursions.includes(excursion)) targetDay.excursions.push(excursion);
+      targetDay.isFreeDay = false;
+    });
+  }
+
+  return syncedDays;
+}
+
+export function hasStructuralStopChanges(previous: CityStop[], next: CityStop[]): boolean {
+  if (previous.length !== next.length) return true;
+  return previous.some((stop, index) => stop.id !== next[index]?.id || stop.nights !== next[index]?.nights);
+}
+
+export function hasDayStructureDrift(itinerary: TravelItinerary): boolean {
+  const expectedIds = generateItineraryDays(itinerary).map(day => day.id);
+  return expectedIds.length !== itinerary.days.length || expectedIds.some((id, index) => itinerary.days[index]?.id !== id);
+}
+
+/** Marks legacy stored day edits so the explicit regeneration prompt can protect them. */
+export function inferManualDayEdits(itinerary: TravelItinerary): TravelItinerary {
+  const generatedById = new Map(generateItineraryDays(itinerary).map(day => [day.id, day]));
+  return {
+    ...itinerary,
+    days: itinerary.days.map(day => {
+      const generated = generatedById.get(day.id);
+      return {
+        ...day,
+        descriptionEditedManually: day.descriptionEditedManually ?? Boolean(generated && day.description !== generated.description),
+        titleEditedManually: day.titleEditedManually ?? Boolean(generated && day.title !== generated.title),
+      };
+    }),
+  };
+}
+
 function formatDateOffset(startDateStr: string, dayOffset: number): string {
   try {
     if (!startDateStr) return `Día ${dayOffset + 1}`;
