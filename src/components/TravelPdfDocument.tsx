@@ -11,6 +11,7 @@ import {
   Line,
   Rect,
   Polygon,
+  Link,
   StyleSheet,
 } from '@react-pdf/renderer';
 import {
@@ -18,7 +19,7 @@ import {
   MEAL_PLAN_LABELS,
   TRANSPORT_LABELS,
 } from '../utils/itineraryGenerator';
-import { CityStop, TravelItinerary } from '../types';
+import { CityStop, PhotoAttribution, TravelItinerary } from '../types';
 
 const C = {
   navy: '#173447',
@@ -91,6 +92,9 @@ const styles = StyleSheet.create({
   cityPhoto: { width: 184, height: 119, objectFit: 'cover', borderRadius: 4 },
   cityPhotoPlaceholder: { width: 184, height: 119, borderRadius: 4, borderWidth: 1, borderColor: C.line, backgroundColor: C.pale, alignItems: 'center', justifyContent: 'center', padding: 8 },
   placeholderText: { color: C.muted, fontSize: 8, textAlign: 'center' },
+  photoCredit: { color: C.white, backgroundColor: 'rgba(23, 52, 71, 0.82)', fontSize: 5.5, paddingHorizontal: 4, paddingVertical: 3, borderRadius: 2, position: 'absolute' as const },
+  cityPhotoCredit: { bottom: 3, left: 3, right: 3 },
+  coverPhotoCredit: { bottom: 7, left: 8, maxWidth: '85%' },
   day: { borderTopWidth: 1, borderTopColor: C.line, paddingTop: 8, marginTop: 5 },
   dayHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 4 },
   dayHeading: { flexGrow: 1, flexBasis: 0 },
@@ -109,6 +113,16 @@ const styles = StyleSheet.create({
   noteText: { color: C.ink, fontSize: 9, lineHeight: 1.4 },
   endline: { marginTop: 13, paddingTop: 8, borderTopWidth: 1, borderTopColor: C.line, color: C.muted, fontSize: 8, textAlign: 'center' },
 });
+
+function PhotoCredit({ attribution, variant }: { attribution?: PhotoAttribution; variant: 'cover' | 'city' }) {
+  if (!attribution) return null;
+  return (
+    <Text style={[styles.photoCredit, variant === 'cover' ? styles.coverPhotoCredit : styles.cityPhotoCredit]}>
+      Foto “<Link src={attribution.filePageUrl}>{attribution.title}</Link>” de {attribution.author}
+      {' · Wikimedia Commons · recortada · '}<Link src={attribution.licenseUrl}>{attribution.license}</Link>
+    </Text>
+  );
+}
 
 function formatDate(value?: string): string {
   if (!value) return 'Fecha a definir';
@@ -326,7 +340,12 @@ function CitySection({ itinerary, stops, startIndex, showTitle }: { itinerary: T
               {connection ? <Text style={styles.connection}><Text style={styles.detailLabel}>Conexión a {next?.cityName}: </Text>{connection}</Text> : null}
               {!next && itinerary.flightEnd.hasFlight ? <Text style={styles.connection}><Text style={styles.detailLabel}>Regreso: </Text>{itinerary.flightEnd.route}{itinerary.flightEnd.notes ? ` · ${itinerary.flightEnd.notes}` : ''}</Text> : null}
             </View>
-            {stop.imageUrl ? <Image src={stop.imageUrl} style={styles.cityPhoto} /> : (
+            {stop.imageUrl ? (
+              <View style={{ width: 184, height: 119, position: 'relative' }}>
+                <Image src={stop.imageUrl} style={styles.cityPhoto} />
+                <PhotoCredit attribution={stop.imageAttribution} variant="city" />
+              </View>
+            ) : (
               <View style={styles.cityPhotoPlaceholder}><Text style={styles.placeholderText}>{stop.cityName}{stop.country ? ` · ${stop.country}` : ''}</Text></View>
             )}
           </View>
@@ -403,7 +422,12 @@ export function TravelPdfDocument({ itinerary }: { itinerary: TravelItinerary })
       <Page size="A4" style={styles.page}>
         <Header itinerary={itinerary} pageNumber={1} />
         <PageFooter pageNumber={1} totalPages={totalPages} logoUrl={itinerary.logoUrl} />
-        {itinerary.coverImageUrl ? <Image src={itinerary.coverImageUrl} style={styles.coverPhoto} /> : (
+        {itinerary.coverImageUrl ? (
+          <View style={{ position: 'relative' }}>
+            <Image src={itinerary.coverImageUrl} style={styles.coverPhoto} />
+            <PhotoCredit attribution={itinerary.coverImageAttribution} variant="cover" />
+          </View>
+        ) : (
           <View style={styles.coverPlaceholder}>
             <Text style={styles.coverEyebrow}>Una experiencia a medida · Tresor Travel</Text>
             <Text style={styles.coverRoute}>{route}</Text>

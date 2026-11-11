@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { ChangeEvent, Dispatch, SetStateAction, useRef, useState } from 'react';
+import React, { ChangeEvent, Dispatch, SetStateAction, useEffect, useRef, useState } from 'react';
 import { TravelItinerary } from '../types';
 import { TresorLogo } from './TresorLogo';
 import { RouteSvgMap } from './RouteSvgMap';
@@ -11,6 +11,9 @@ import { TravelMap2D } from './TravelMap2D';
 import { TRANSPORT_LABELS, MEAL_PLAN_LABELS, ACCOMMODATION_LABELS } from '../utils/itineraryGenerator';
 import { Download, Printer, X, Check, Calendar, User, DollarSign, MapPin, Plane, Car, Sparkles, Layers, Compass } from 'lucide-react';
 import { ImagePlus, Trash2 } from 'lucide-react';
+import { findDestinationPhoto } from '../utils/destinationPhotos';
+
+const usedPhotoIdsByItinerary = new Map<string, Set<number>>();
 
 interface PdfExportViewProps {
   itinerary: TravelItinerary;
@@ -66,6 +69,8 @@ export const PdfExportView: React.FC<PdfExportViewProps> = ({
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [pdfMapStyle, setPdfMapStyle] = useState<'geographic' | 'editorial'>('editorial');
   const [imageError, setImageError] = useState('');
+  const [isSearchingPhotos, setIsSearchingPhotos] = useState(false);
+  const [photoSearchNotice, setPhotoSearchNotice] = useState('');
 
   const totalNights = itinerary.stops.reduce((acc, s) => acc + (s.nights || 0), 0);
   const totalDays = itinerary.days.length;
@@ -88,15 +93,93 @@ export const PdfExportView: React.FC<PdfExportViewProps> = ({
     }
   };
 
-  const setCoverPhoto = (photoUrl: string) => onUpdateItinerary?.(current => ({ ...current, coverImageUrl: photoUrl }));
+  const setCoverPhoto = (photoUrl: string) => onUpdateItinerary?.(current => ({ ...current, coverImageUrl: photoUrl, coverImageAttribution: undefined }));
   const setCityPhoto = (stopId: string, photoUrl?: string) => onUpdateItinerary?.(current => ({
     ...current,
-    stops: current.stops.map(stop => stop.id === stopId ? { ...stop, imageUrl: photoUrl } : stop),
+    stops: current.stops.map(stop => stop.id === stopId ? { ...stop, imageUrl: photoUrl, imageAttribution: undefined } : stop),
   }));
   const setDayPhoto = (dayId: string, photoUrl?: string) => onUpdateItinerary?.(current => ({
     ...current,
     days: current.days.map(day => day.id === dayId ? { ...day, imageUrl: photoUrl } : day),
   }));
+
+  useEffect(() => {
+    if (!onUpdateItinerary || !itinerary.id || itinerary.stops.length === 0) return;
+    let cancelled = false;
+    let addedPhotos = 0;
+    let missingPhotos = 0;
+    const usedPageIds = usedPhotoIdsByItinerary.get(itinerary.id) || new Set<number>();
+    usedPhotoIdsByItinerary.set(itinerary.id, usedPageIds);
+    if (itinerary.coverImageAttribution) usedPageIds.add(itinerary.coverImageAttribution.pageId);
+    itinerary.stops.forEach(stop => {
+      if (stop.imageAttribution) usedPageIds.add(stop.imageAttribution.pageId);
+    });
+
+    const assignPhoto = (target: 'cover' | string, photo: Awaited<ReturnType<typeof findDestinationPhoto>>) => {
+      if (!photo || !onUpdateItinerary) return;
+      onUpdateItinerary(current => {
+        if (target === 'cover') {
+          if (current.coverImageUrl) return current;
+          return { ...current, coverImageUrl: photo.imageUrl, coverImageAttribution: photo.attribution };
+        }
+        return {
+          ...current,
+          stops: current.stops.map(stop => stop.id === target && !stop.imageUrl
+            ? { ...stop, imageUrl: photo.imageUrl, imageAttribution: photo.attribution }
+            : stop),
+        };
+      });
+    };
+
+    const findPhoto = (query: string, terms: string[], width: number, height: number, apiWidth: number) =>
+      findDestinationPhoto(query, terms, usedPageIds, { width, height, apiWidth });
+
+    const populateMissingPhotos = async () => {
+      setIsSearchingPhotos(true);
+      setPhotoSearchNotice('');
+      const firstStop = itinerary.stops[0];
+      if (itinerary.coverImageUrl) {
+        if (itinerary.coverImageAttribution) usedPageIds.add(itinerary.coverImageAttribution.pageId);
+      } else {
+        const cover = await findPhoto(
+          `${firstStop.cityName} ${firstStop.country} panorama landscape`,
+          [firstStop.cityName, firstStop.country], 1600, 720, 1600,
+        ) || await findPhoto(`${firstStop.cityName} ${firstStop.country}`, [firstStop.cityName], 1600, 720, 1600);
+        if (cancelled) return;
+        if (cover) { assignPhoto('cover', cover); addedPhotos += 1; }
+        else missingPhotos += 1;
+      }
+
+      for (const stop of itinerary.stops) {
+        if (cancelled) return;
+        if (stop.imageUrl) {
+          if (stop.imageAttribution) usedPageIds.add(stop.imageAttribution.pageId);
+          continue;
+        }
+        const photo = await findPhoto(
+          `${stop.cityName} ${stop.country} landmark city`,
+          [stop.cityName], 520, 336, 900,
+        ) || await findPhoto(`${stop.cityName} ${stop.country}`, [stop.cityName], 520, 336, 900);
+        if (cancelled) return;
+        if (photo) { assignPhoto(stop.id, photo); addedPhotos += 1; }
+        else missingPhotos += 1;
+      }
+      if (!cancelled) {
+        setIsSearchingPhotos(false);
+        if (missingPhotos) setPhotoSearchNotice(`No se encontraron algunas fotografías apropiadas. Podés cargarlas manualmente; las fichas sin foto conservan su diseño.`);
+        else if (addedPhotos) setPhotoSearchNotice(`Se añadieron automáticamente ${addedPhotos} fotografías con sus créditos.`);
+      }
+    };
+
+    void populateMissingPhotos().catch(error => {
+      console.warn('No se pudieron completar las fotografías automáticas:', error);
+      if (!cancelled) {
+        setIsSearchingPhotos(false);
+        setPhotoSearchNotice('No se pudieron buscar algunas fotografías. Podés cargarlas manualmente.');
+      }
+    });
+    return () => { cancelled = true; };
+  }, [itinerary.id, onUpdateItinerary]);
 
   const handleBrowserPrint = () => {
     window.print();
@@ -164,7 +247,7 @@ export const PdfExportView: React.FC<PdfExportViewProps> = ({
 
             <button
               type="button"
-              disabled={isGeneratingPdf}
+              disabled={isGeneratingPdf || isSearchingPhotos}
               onClick={handleDownloadPdf}
               className="px-4 py-2 rounded-xl bg-[#b91c3e] hover:bg-rose-800 text-white text-xs font-bold flex items-center gap-1.5 transition-colors shadow-md disabled:opacity-50"
             >
@@ -198,6 +281,8 @@ export const PdfExportView: React.FC<PdfExportViewProps> = ({
         </div>
 
         {imageError && <p role="alert" className="pdf-export-controls print:hidden border-b border-rose-200 bg-rose-50 px-6 py-2 text-xs font-semibold text-rose-800">{imageError}</p>}
+        {isSearchingPhotos && <p role="status" className="pdf-export-controls print:hidden border-b border-sky-200 bg-sky-50 px-6 py-2 text-xs font-semibold text-sky-800">Buscando fotografías de los destinos en Wikimedia Commons…</p>}
+        {!isSearchingPhotos && photoSearchNotice && <p role="status" className="pdf-export-controls print:hidden border-b border-slate-200 bg-slate-50 px-6 py-2 text-xs text-slate-600">{photoSearchNotice}</p>}
 
         {/* Printable Document Sheet Container */}
         <div className="overflow-y-auto p-4 sm:p-8 bg-slate-200/60 print:bg-white print:p-0 print:overflow-visible">
@@ -247,13 +332,19 @@ export const PdfExportView: React.FC<PdfExportViewProps> = ({
                     <input type="file" accept="image/*" className="hidden" onChange={event => handlePhotoUpload(event, setCoverPhoto, [1600, 720])} />
                   </label>
                   {itinerary.coverImageUrl && (
-                    <button type="button" onClick={() => onUpdateItinerary(current => ({ ...current, coverImageUrl: undefined }))} className="rounded-lg border border-white/40 bg-slate-950/60 p-2 text-white hover:bg-slate-950/80" aria-label="Quitar fotografía de portada">
+                    <button type="button" onClick={() => onUpdateItinerary(current => ({ ...current, coverImageUrl: undefined, coverImageAttribution: undefined }))} className="rounded-lg border border-white/40 bg-slate-950/60 p-2 text-white hover:bg-slate-950/80" aria-label="Quitar fotografía de portada">
                       <Trash2 className="h-4 w-4" />
                     </button>
                   )}
                 </div>
               )}
             </section>
+            {itinerary.coverImageAttribution && (
+              <p className="-mt-4 mb-5 text-[9px] text-slate-500">
+                Foto <a href={itinerary.coverImageAttribution.filePageUrl} target="_blank" rel="noreferrer" className="underline">“{itinerary.coverImageAttribution.title}”</a> de {itinerary.coverImageAttribution.author}
+                {' · Wikimedia Commons · recortada para el diseño · '}<a href={itinerary.coverImageAttribution.licenseUrl} target="_blank" rel="noreferrer" className="underline">{itinerary.coverImageAttribution.license}</a>
+              </p>
+            )}
 
             {/* Itinerary Title & Client Hero */}
             <div className="pdf-keep-together bg-slate-50 border border-slate-200/80 rounded-2xl p-5 sm:p-6 mb-5 sm:mb-8 relative overflow-hidden print:p-4 print:mb-4">
@@ -544,6 +635,12 @@ export const PdfExportView: React.FC<PdfExportViewProps> = ({
                           <div className="pdf-city-photo flex w-full items-end rounded-xl border border-slate-200 bg-[linear-gradient(145deg,#e8eef0,#cedadd_55%,#f5eee5)] p-3">
                             <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{stop.cityName} · {stop.country}</span>
                           </div>
+                        )}
+                        {stop.imageAttribution && (
+                          <p className="mt-1 text-[9px] leading-snug text-slate-500">
+                            Foto <a href={stop.imageAttribution.filePageUrl} target="_blank" rel="noreferrer" className="underline">“{stop.imageAttribution.title}”</a> de {stop.imageAttribution.author}
+                            {' · Wikimedia Commons · recortada para el diseño · '}<a href={stop.imageAttribution.licenseUrl} target="_blank" rel="noreferrer" className="underline">{stop.imageAttribution.license}</a>
+                          </p>
                         )}
                         {onUpdateItinerary && (
                           <div className="pdf-export-controls mt-2 flex items-center justify-between print:hidden">

@@ -22,6 +22,16 @@ export type MealPlan =
   | 'all_inclusive'
   | 'sin_regimen';
 
+export interface PhotoAttribution {
+  provider: 'Wikimedia Commons';
+  pageId: number;
+  title: string;
+  author: string;
+  license: string;
+  licenseUrl: string;
+  filePageUrl: string;
+}
+
 export interface CityStop {
   id: string;
   cityName: string;
@@ -45,6 +55,7 @@ export interface CityStop {
   // Descripción de la ciudad para el primer día
   cityDescription: string;
   imageUrl?: string;
+  imageAttribution?: PhotoAttribution;
   // Conexión hacia la siguiente ciudad (aplica si no es la última)
   transportToNext: TransportType;
   transportNotes: string;
@@ -113,4 +124,5 @@ export interface TravelItinerary {
   // Logo personalizado (opcional, por defecto Tresor Travel)
   logoUrl?: string;
   coverImageUrl?: string;
+  coverImageAttribution?: PhotoAttribution;
 }
