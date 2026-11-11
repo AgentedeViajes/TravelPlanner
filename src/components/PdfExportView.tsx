@@ -3,135 +3,131 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useRef, useState } from 'react';
+import React, { ChangeEvent, Dispatch, SetStateAction, useRef, useState } from 'react';
 import { TravelItinerary } from '../types';
 import { TresorLogo } from './TresorLogo';
 import { RouteSvgMap } from './RouteSvgMap';
 import { TravelMap2D } from './TravelMap2D';
 import { TRANSPORT_LABELS, MEAL_PLAN_LABELS, ACCOMMODATION_LABELS } from '../utils/itineraryGenerator';
 import { Download, Printer, X, Check, Calendar, User, DollarSign, MapPin, Plane, Car, Sparkles, Layers, Compass } from 'lucide-react';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+import { ImagePlus, Trash2 } from 'lucide-react';
 
 interface PdfExportViewProps {
   itinerary: TravelItinerary;
   onClose?: () => void;
   isInlinePreview?: boolean;
+  onUpdateItinerary?: Dispatch<SetStateAction<TravelItinerary>>;
+}
+
+async function compressLocalPhoto(file: File, maxWidth: number, maxHeight: number): Promise<string> {
+  if (!file.type.startsWith('image/')) throw new Error('Seleccione un archivo de imagen.');
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, maxWidth / bitmap.width, maxHeight / bitmap.height);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('No se pudo procesar la imagen.');
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return canvas.toDataURL('image/jpeg', 0.82);
+}
+
+async function normalizeLogoForPdf(logoUrl?: string): Promise<string | undefined> {
+  if (!logoUrl) {
+    const response = await fetch('/logo.svg');
+    if (!response.ok) return undefined;
+    const svg = await response.text();
+    logoUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  }
+  if (/^data:image\/(png|jpe?g);/i.test(logoUrl)) return logoUrl;
+  if (!logoUrl.startsWith('data:image/')) return undefined;
+  const image = new Image();
+  image.src = logoUrl;
+  await image.decode();
+  const scale = Math.min(3, 1800 / Math.max(1, image.naturalWidth));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('No se pudo preparar el logotipo para el PDF.');
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/png');
 }
 
 export const PdfExportView: React.FC<PdfExportViewProps> = ({
   itinerary,
   onClose,
   isInlinePreview = false,
+  onUpdateItinerary,
 }) => {
   const printAreaRef = useRef<HTMLDivElement>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [pdfMapStyle, setPdfMapStyle] = useState<'geographic' | 'editorial'>('editorial');
+  const [imageError, setImageError] = useState('');
 
   const totalNights = itinerary.stops.reduce((acc, s) => acc + (s.nights || 0), 0);
   const totalDays = itinerary.days.length;
+  const featuredPhotoCount = itinerary.days.filter(day => day.imageUrl).length;
+  const routeText = itinerary.stops.map(stop => stop.cityName).join('  →  ');
+  const dateRange = itinerary.days.length
+    ? `${itinerary.days[0].dateStr || 'Fecha a definir'} — ${itinerary.days[itinerary.days.length - 1].dateStr || 'Fecha a definir'}`
+    : 'Fechas a definir';
+
+  const handlePhotoUpload = async (event: ChangeEvent<HTMLInputElement>, update: (photoUrl: string) => void, bounds: [number, number]) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !onUpdateItinerary) return;
+    setImageError('');
+    try {
+      const photoUrl = await compressLocalPhoto(file, bounds[0], bounds[1]);
+      update(photoUrl);
+    } catch (error) {
+      setImageError(error instanceof Error ? error.message : 'No se pudo cargar la imagen.');
+    }
+  };
+
+  const setCoverPhoto = (photoUrl: string) => onUpdateItinerary?.(current => ({ ...current, coverImageUrl: photoUrl }));
+  const setCityPhoto = (stopId: string, photoUrl?: string) => onUpdateItinerary?.(current => ({
+    ...current,
+    stops: current.stops.map(stop => stop.id === stopId ? { ...stop, imageUrl: photoUrl } : stop),
+  }));
+  const setDayPhoto = (dayId: string, photoUrl?: string) => onUpdateItinerary?.(current => ({
+    ...current,
+    days: current.days.map(day => day.id === dayId ? { ...day, imageUrl: photoUrl } : day),
+  }));
 
   const handleBrowserPrint = () => {
     window.print();
   };
 
   const handleDownloadPdf = async () => {
-    if (!printAreaRef.current) return;
     setIsGeneratingPdf(true);
     setDownloadSuccess(false);
+    setImageError('');
 
     try {
-      // Temporarily ensure high quality canvas rendering without dark artifacts or cutoffs
-      const element = printAreaRef.current;
-      const canvas = await html2canvas(element, {
-        scale: 2, // High resolution
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#ffffff',
-        logging: false,
-        scrollX: 0,
-        scrollY: 0,
-        windowWidth: element.scrollWidth || 850,
-        onclone: (clonedDoc) => {
-          // Remove any stray box-shadows or dark overlays that html2canvas might render as black squares
-          const clonedArea = clonedDoc.getElementById('itinerary-pdf-printable-area');
-          if (clonedArea) {
-            clonedArea.style.boxShadow = 'none';
-            clonedArea.style.backgroundColor = '#ffffff';
-          }
-          const darkPill = clonedDoc.getElementById('map-route-summary-pill');
-          if (darkPill) {
-            darkPill.style.display = 'none';
-          }
-        },
-      });
-
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-
-      // Printable area margins (match @page 10mm margins)
-      const marginX = 8;
-      const marginY = 8;
-      const printableWidth = pdfWidth - marginX * 2;
-      const printableHeight = pdfHeight - marginY * 2;
-
-      // Calculate total rendered height in mm based on printable width
-      const imgHeight = (canvas.height * printableWidth) / canvas.width;
-
-      let heightLeft = imgHeight;
-      let sY = 0; // Source canvas Y pixel pointer
-
-      // Slice the canvas into exact A4 pages so elements never stretch or cross borders abruptly
-      const pageCanvasHeight = (printableHeight * canvas.width) / printableWidth;
-
-      while (heightLeft > 0) {
-        // Create an individual page canvas
-        const currentSliceHeight = Math.min(pageCanvasHeight, canvas.height - sY);
-        const pageCanvas = document.createElement('canvas');
-        pageCanvas.width = canvas.width;
-        pageCanvas.height = currentSliceHeight;
-
-        const ctx = pageCanvas.getContext('2d');
-        if (ctx) {
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
-          ctx.drawImage(
-            canvas,
-            0,
-            sY,
-            canvas.width,
-            currentSliceHeight,
-            0,
-            0,
-            canvas.width,
-            currentSliceHeight
-          );
-        }
-
-        const pageImgData = pageCanvas.toDataURL('image/jpeg', 0.95);
-        const sliceMmHeight = (currentSliceHeight * printableWidth) / canvas.width;
-
-        pdf.addImage(pageImgData, 'JPEG', marginX, marginY, printableWidth, sliceMmHeight);
-
-        sY += currentSliceHeight;
-        heightLeft -= printableHeight;
-
-        if (heightLeft > 0 && sY < canvas.height) {
-          pdf.addPage();
-        }
-      }
-
-      const cleanFileName = `Itinerario_${itinerary.title.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'travel_planner'}.pdf`;
-      pdf.save(cleanFileName);
+      const [{ pdf }, { TravelPdfDocument }] = await Promise.all([
+        import('@react-pdf/renderer'),
+        import('./TravelPdfDocument'),
+      ]);
+      const pdfItinerary = { ...itinerary, logoUrl: await normalizeLogoForPdf(itinerary.logoUrl) };
+      const blob = await pdf(<TravelPdfDocument itinerary={pdfItinerary} />).toBlob();
+      const fileName = `Itinerario_${itinerary.title.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '').toLowerCase() || 'travel_planner'}.pdf`;
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
       setDownloadSuccess(true);
-      setTimeout(() => setDownloadSuccess(false), 4000);
-    } catch (err) {
-      console.error('Error generating PDF:', err);
-      // Fallback to browser print dialog
-      window.print();
+      window.setTimeout(() => setDownloadSuccess(false), 4000);
+    } catch (error) {
+      console.error('Error generating PDF with React PDF:', error);
+      setImageError(error instanceof Error ? `No se pudo generar el PDF: ${error.message}` : 'No se pudo generar el PDF. Verifique las fotografías locales e intente nuevamente.');
     } finally {
       setIsGeneratingPdf(false);
     }
@@ -201,6 +197,8 @@ export const PdfExportView: React.FC<PdfExportViewProps> = ({
           </div>
         </div>
 
+        {imageError && <p role="alert" className="pdf-export-controls print:hidden border-b border-rose-200 bg-rose-50 px-6 py-2 text-xs font-semibold text-rose-800">{imageError}</p>}
+
         {/* Printable Document Sheet Container */}
         <div className="overflow-y-auto p-4 sm:p-8 bg-slate-200/60 print:bg-white print:p-0 print:overflow-visible">
           <div
@@ -227,8 +225,38 @@ export const PdfExportView: React.FC<PdfExportViewProps> = ({
               </div>
             </div>
 
+            {/* Portada panorámica: acepta una imagen local y conserva un estado elegante sin foto. */}
+            <section className="pdf-cover pdf-keep-together relative mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-[#172d3b]">
+              {itinerary.coverImageUrl ? (
+                <img src={itinerary.coverImageUrl} alt={`Destino del viaje ${itinerary.title}`} className="pdf-cover-image block w-full object-cover" />
+              ) : (
+                <div className="pdf-cover-image pdf-cover-placeholder flex w-full items-end bg-[radial-gradient(ellipse_at_80%_20%,rgba(224,173,119,.55),transparent_35%),linear-gradient(125deg,#183744_0%,#385b61_48%,#b57659_100%)]">
+                  <div className="p-7 text-white">
+                    <span className="text-[10px] font-bold uppercase tracking-[0.28em] text-white/70">Una experiencia a medida</span>
+                    <div className="mt-3 h-px w-14 bg-white/70" />
+                    <p className="mt-2 text-sm font-medium tracking-wide text-white/90">{routeText || 'Descubrí tu próximo destino'}</p>
+                  </div>
+                  <div className="pointer-events-none absolute -right-12 -top-24 h-72 w-72 rounded-full border border-white/20" />
+                  <div className="pointer-events-none absolute -right-4 -top-16 h-56 w-56 rounded-full border border-white/15" />
+                </div>
+              )}
+              {onUpdateItinerary && (
+                <div className="pdf-export-controls absolute right-3 top-3 flex gap-2 print:hidden">
+                  <label className="cursor-pointer rounded-lg border border-white/40 bg-slate-950/60 px-3 py-2 text-[11px] font-bold text-white shadow backdrop-blur-sm hover:bg-slate-950/80">
+                    <span className="inline-flex items-center gap-1.5"><ImagePlus className="h-3.5 w-3.5" />{itinerary.coverImageUrl ? 'Cambiar portada' : 'Cargar portada'}</span>
+                    <input type="file" accept="image/*" className="hidden" onChange={event => handlePhotoUpload(event, setCoverPhoto, [1600, 720])} />
+                  </label>
+                  {itinerary.coverImageUrl && (
+                    <button type="button" onClick={() => onUpdateItinerary(current => ({ ...current, coverImageUrl: undefined }))} className="rounded-lg border border-white/40 bg-slate-950/60 p-2 text-white hover:bg-slate-950/80" aria-label="Quitar fotografía de portada">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              )}
+            </section>
+
             {/* Itinerary Title & Client Hero */}
-            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-5 sm:p-6 mb-5 sm:mb-8 relative overflow-hidden print:p-4 print:mb-4">
+            <div className="pdf-keep-together bg-slate-50 border border-slate-200/80 rounded-2xl p-5 sm:p-6 mb-5 sm:mb-8 relative overflow-hidden print:p-4 print:mb-4">
               <div className="absolute top-0 right-0 w-32 h-32 bg-[#b91c3e]/5 rounded-bl-full pointer-events-none" />
 
               <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center">
@@ -242,6 +270,11 @@ export const PdfExportView: React.FC<PdfExportViewProps> = ({
                       <User className="w-4 h-4 text-[#b91c3e]" />
                       <span>Pasajero / Cliente:</span>
                       <strong className="text-slate-900">{itinerary.clientName || 'A definir'}</strong>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Calendar className="w-4 h-4 text-[#b91c3e]" />
+                      <span>Fechas:</span>
+                      <strong className="text-slate-900">{dateRange}</strong>
                     </div>
                     {itinerary.startDate && (
                       <div className="flex items-center gap-1.5">
@@ -277,12 +310,26 @@ export const PdfExportView: React.FC<PdfExportViewProps> = ({
               </div>
             </div>
 
-            {/* International Flights Banner (If enabled) */}
+            <section className="pdf-keep-together mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {[
+                { label: 'Duración', value: `${totalDays} días` },
+                { label: 'Estadía', value: `${totalNights} noches` },
+                { label: 'Destinos', value: `${itinerary.stops.length} ciudades` },
+                { label: 'Recorrido', value: routeText || 'A definir' },
+              ].map(metric => (
+                <div key={metric.label} className="rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-sm">
+                  <span className="block text-[9px] font-extrabold uppercase tracking-[0.16em] text-slate-400">{metric.label}</span>
+                  <span className="mt-1 block text-xs font-bold text-slate-800">{metric.value}</span>
+                </div>
+              ))}
+            </section>
+
+            {/* Start and return flights, which may be international or domestic. */}
             {(itinerary.flightStart.hasFlight || itinerary.flightEnd.hasFlight) && (
               <div className="mb-5 sm:mb-8 p-3 sm:p-4 bg-amber-50/70 border border-amber-200 rounded-xl space-y-2 print:p-2.5 print:mb-4">
                 <div className="flex items-center gap-2 text-xs font-extrabold text-amber-900 uppercase tracking-wide">
                   <Plane className="w-4 h-4 text-amber-700" />
-                  <span>Vuelos Internacionales Incluidos / Programados</span>
+                  <span>Vuelos de Inicio y Regreso</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                   {itinerary.flightStart.hasFlight && (
@@ -352,6 +399,7 @@ export const PdfExportView: React.FC<PdfExportViewProps> = ({
               </div>
 
               {/* Render Selected Map - Optimized height for A4 page harmony */}
+              <div className="pdf-screen-map">
               {pdfMapStyle === 'geographic' ? (
                 <div className="rounded-xl overflow-hidden border border-slate-200 shadow-sm print:h-[260px]">
                   <TravelMap2D
@@ -366,6 +414,13 @@ export const PdfExportView: React.FC<PdfExportViewProps> = ({
                   className="w-full h-64 sm:h-72 print:h-[260px] rounded-xl"
                 />
               )}
+              </div>
+              <div className="pdf-export-map hidden">
+                <RouteSvgMap
+                  stops={itinerary.stops}
+                  className="w-full h-64 rounded-xl"
+                />
+              </div>
             </div>
 
             {/* Resumen de Ciudades, Alojamientos y Transportes */}
@@ -428,9 +483,87 @@ export const PdfExportView: React.FC<PdfExportViewProps> = ({
               </div>
             </div>
 
+            {/* Fichas de destino con servicios y aclaraciones completas */}
+            <section className="pdf-city-section mb-8 space-y-4">
+              <div className="flex items-end justify-between border-b border-slate-200 pb-2">
+                <div>
+                  <span className="text-[9px] font-extrabold uppercase tracking-[0.2em] text-[#b91c3e]">Tu recorrido</span>
+                  <h3 className="mt-1 text-sm font-extrabold text-slate-900">Destinos y servicios</h3>
+                </div>
+                <span className="text-xs font-semibold text-slate-500">{itinerary.stops.length} paradas</span>
+              </div>
+              {itinerary.stops.map((stop, idx) => {
+                const isLast = idx === itinerary.stops.length - 1;
+                const transport = TRANSPORT_LABELS[stop.transportToNext] || { label: 'Conexión' };
+                return (
+                  <article key={stop.id} className="pdf-city-card pdf-keep-together overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                    <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-[1fr_245px] sm:p-5">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#b91c3e] text-xs font-extrabold text-white">{idx + 1}</span>
+                          <h4 className="text-base font-extrabold text-slate-900">{stop.cityName}</h4>
+                          <span className="text-xs font-medium text-slate-500">{stop.country}</span>
+                          <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[10px] font-extrabold text-[#b91c3e]">{stop.nights} {stop.nights === 1 ? 'noche' : 'noches'}</span>
+                        </div>
+                        <p className="mt-3 text-xs leading-relaxed text-slate-600">{stop.cityDescription || `Estadía en ${stop.cityName}.`}</p>
+                        <div className="mt-4 grid grid-cols-1 gap-x-5 gap-y-2 text-[11px] sm:grid-cols-2">
+                          <p><strong className="text-slate-800">Alojamiento:</strong> <span className="text-slate-600">{stop.hotelName || 'A definir'} · {ACCOMMODATION_LABELS[stop.accommodationCategory] || stop.accommodationCategory}</span></p>
+                          <p><strong className="text-slate-800">Régimen:</strong> <span className="text-slate-600">{MEAL_PLAN_LABELS[stop.mealPlan] || stop.mealPlan}</span></p>
+                          <div>
+                            <strong className="text-slate-800">Traslado IN:</strong>{' '}
+                            <span className="text-slate-600">{stop.transferIn ? stop.transferInNotes || 'Incluido' : 'No incluido'}</span>
+                          </div>
+                          <div>
+                            <strong className="text-slate-800">Traslado OUT:</strong>{' '}
+                            <span className="text-slate-600">{stop.transferOut ? stop.transferOutNotes || 'Incluido' : 'No incluido'}</span>
+                          </div>
+                        </div>
+                        {stop.excursions.length > 0 && (
+                          <div className="mt-3">
+                            <strong className="text-[11px] text-slate-800">Excursiones seleccionadas</strong>
+                            <ul className="mt-1 space-y-1 text-[11px] text-slate-600">
+                              {stop.excursions.map((excursion, excursionIndex) => <li key={`${stop.id}-exc-${excursionIndex}`}>• {excursion}</li>)}
+                            </ul>
+                          </div>
+                        )}
+                        {!isLast && (
+                          <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-700">
+                            <strong>Conexión a {itinerary.stops[idx + 1].cityName}:</strong> {transport.label}{stop.transportNotes ? ` · ${stop.transportNotes}` : ''}
+                          </div>
+                        )}
+                        {isLast && itinerary.flightEnd.hasFlight && (
+                          <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-700">
+                            <strong>Regreso:</strong> {itinerary.flightEnd.route}{itinerary.flightEnd.notes ? ` · ${itinerary.flightEnd.notes}` : ''}
+                          </div>
+                        )}
+                      </div>
+                      <div className="relative">
+                        {stop.imageUrl ? (
+                          <img src={stop.imageUrl} alt={`${stop.cityName}`} className="pdf-city-photo block w-full rounded-xl object-cover" />
+                        ) : (
+                          <div className="pdf-city-photo flex w-full items-end rounded-xl border border-slate-200 bg-[linear-gradient(145deg,#e8eef0,#cedadd_55%,#f5eee5)] p-3">
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{stop.cityName} · {stop.country}</span>
+                          </div>
+                        )}
+                        {onUpdateItinerary && (
+                          <div className="pdf-export-controls mt-2 flex items-center justify-between print:hidden">
+                            <label className="cursor-pointer text-[10px] font-bold text-[#b91c3e] hover:underline">
+                              {stop.imageUrl ? 'Cambiar fotografía' : 'Añadir fotografía local'}
+                              <input type="file" accept="image/*" className="hidden" onChange={event => handlePhotoUpload(event, photoUrl => setCityPhoto(stop.id, photoUrl), [520, 336])} />
+                            </label>
+                            {stop.imageUrl && <button type="button" onClick={() => setCityPhoto(stop.id)} className="text-[10px] font-bold text-slate-400 hover:text-rose-700">Quitar</button>}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </section>
+
             {/* Itinerario Detallado Día por Día */}
             <div className="mb-8 space-y-4">
-              <div className="border-b border-slate-200 pb-2 flex items-center justify-between">
+              <div className="pdf-keep-with-next border-b border-slate-200 pb-2 flex items-center justify-between">
                 <h3 className="text-sm font-extrabold text-[#b91c3e] uppercase tracking-wider">
                   Itinerario Detallado Día a Día
                 </h3>
@@ -446,7 +579,7 @@ export const PdfExportView: React.FC<PdfExportViewProps> = ({
                     className="pdf-day-card p-4 rounded-xl border border-slate-200 bg-white hover:border-rose-200 transition-colors space-y-2 relative"
                   >
                     {/* Day Header */}
-                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="pdf-day-card-header flex items-start justify-between gap-3 flex-wrap">
                       <div className="flex items-center gap-2.5">
                         <span className="w-8 h-8 rounded-lg bg-[#b91c3e] text-white flex items-center justify-center font-extrabold text-sm shadow-sm">
                           {day.dayNumber}
@@ -476,9 +609,26 @@ export const PdfExportView: React.FC<PdfExportViewProps> = ({
                     </div>
 
                     {/* Day Narrative Description */}
-                    <p className="text-xs text-slate-700 leading-relaxed text-justify">
-                      {day.description}
-                    </p>
+                    <div className={day.imageUrl ? 'grid grid-cols-1 items-start gap-3 sm:grid-cols-[1fr_144px]' : ''}>
+                      <p className="text-xs text-slate-700 leading-relaxed text-justify">
+                        {day.description}
+                      </p>
+                      {day.imageUrl && (
+                        <img src={day.imageUrl} alt={`Jornada ${day.dayNumber} en ${day.cityName}`} className="pdf-day-photo w-full rounded-lg object-cover" />
+                      )}
+                    </div>
+                    {onUpdateItinerary && (
+                      <div className="pdf-export-controls flex justify-end print:hidden">
+                        {day.imageUrl ? (
+                          <button type="button" onClick={() => setDayPhoto(day.id)} className="text-[10px] font-bold text-slate-400 hover:text-rose-700">Quitar foto destacada</button>
+                        ) : (
+                          <label className={`cursor-pointer text-[10px] font-bold ${featuredPhotoCount >= 3 ? 'text-slate-300' : 'text-[#b91c3e] hover:underline'}`} title={featuredPhotoCount >= 3 ? 'Se permiten hasta 3 fotos destacadas por itinerario' : 'Añadir una foto local a esta jornada'}>
+                            {featuredPhotoCount >= 3 ? 'Límite de 3 fotos destacadas' : '＋ Foto destacada (opcional)'}
+                            <input type="file" accept="image/*" disabled={featuredPhotoCount >= 3} className="hidden" onChange={event => handlePhotoUpload(event, photoUrl => setDayPhoto(day.id, photoUrl), [380, 280])} />
+                          </label>
+                        )}
+                      </div>
+                    )}
 
                     {/* Excursions / Badges */}
                     {day.excursions && day.excursions.length > 0 && (

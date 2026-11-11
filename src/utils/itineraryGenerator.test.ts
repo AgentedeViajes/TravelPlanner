@@ -124,7 +124,8 @@ describe('protección de ediciones manuales', () => {
     assert.match(server, /\/api\/ai\/suggest-excursions/);
     assert.match(cityEditor, /fetch\('\/api\/ai\/describe-city'/);
     assert.match(cityEditor, /fetch\('\/api\/ai\/suggest-excursions'/);
-    assert.match(pdfView, /html2canvas/);
-    assert.match(pdfView, /pdf\.save\(cleanFileName\)/);
+    assert.match(pdfView, /@react-pdf\/renderer/);
+    assert.match(pdfView, /\.toBlob\(\)/);
+    assert.doesNotMatch(pdfView, /html2canvas|jspdf/);
   });
 });

@@ -22,11 +22,40 @@
   font-family: inherit !important;
 }
 
+/* Editorial PDF layout and image slots (proportions follow the requested print sizes). */
+.pdf-cover-image {
+  aspect-ratio: 190 / 85;
+  min-height: 260px;
+  max-height: 420px;
+}
+
+.pdf-cover-placeholder {
+  position: relative;
+}
+
+.pdf-city-photo {
+  aspect-ratio: 65 / 42;
+}
+
+.pdf-day-photo {
+  aspect-ratio: 38 / 28;
+}
+
+.pdf-keep-together {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.pdf-keep-with-next {
+  break-after: avoid-page;
+  page-break-after: avoid;
+}
+
 /* Print Optimization for PDF Export */
 @media print {
   @page {
     size: A4 portrait;
-    margin: 10mm;
+    margin: 8mm;
   }
 
   *, *:before, *:after {
@@ -96,26 +125,52 @@
   }
 
   /* Page break rules for clean A4 printing without cuts */
-  .pdf-map-section {
+  .pdf-map-section,
+  .pdf-summary-table-section,
+  .pdf-city-card,
+  .pdf-day-card,
+  .pdf-cover,
+  .pdf-keep-together {
     page-break-inside: avoid !important;
     break-inside: avoid !important;
-    margin-bottom: 12px !important;
+  }
+
+  .pdf-page-break-after {
     page-break-after: always !important;
     break-after: page !important;
   }
 
-  .pdf-summary-table-section {
-    page-break-inside: avoid !important;
-    break-inside: avoid !important;
-    page-break-before: always !important;
-    break-before: page !important;
-    margin-top: 0 !important;
+  .pdf-screen-map {
+    display: none !important;
+  }
+
+  .pdf-export-map {
+    display: block !important;
+  }
+
+  .pdf-cover-image {
+    min-height: 0 !important;
+    max-height: none !important;
+    height: 85mm !important;
+  }
+
+  .pdf-city-photo {
+    height: 42mm !important;
+  }
+
+  .pdf-day-photo {
+    height: 28mm !important;
   }
 
   .pdf-day-card {
-    page-break-inside: avoid !important;
-    break-inside: avoid !important;
     margin-bottom: 12px !important;
+    break-inside: avoid-page !important;
+    page-break-inside: avoid !important;
+  }
+
+  .pdf-day-card p {
+    orphans: 3;
+    widows: 3;
   }
 
   .pdf-notes-section {

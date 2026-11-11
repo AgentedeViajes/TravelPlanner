@@ -566,6 +566,7 @@ export default function App() {
           <div className="space-y-6">
             <PdfExportView
               itinerary={itinerary}
+              onUpdateItinerary={setItinerary}
               isInlinePreview
             />
           </div>
@@ -601,6 +602,7 @@ export default function App() {
       {isPdfModalOpen && (
         <PdfExportView
           itinerary={itinerary}
+          onUpdateItinerary={setItinerary}
           onClose={() => setIsPdfModalOpen(false)}
         />
       )}

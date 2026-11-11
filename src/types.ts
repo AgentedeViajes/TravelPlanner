@@ -44,6 +44,7 @@ export interface CityStop {
   excursionSuggestions?: string[];
   // Descripción de la ciudad para el primer día
   cityDescription: string;
+  imageUrl?: string;
   // Conexión hacia la siguiente ciudad (aplica si no es la última)
   transportToNext: TransportType;
   transportNotes: string;
@@ -88,6 +89,7 @@ export interface ItineraryDay {
   // Marca descripciones modificadas desde el editor manual.
   descriptionEditedManually?: boolean;
   titleEditedManually?: boolean;
+  imageUrl?: string;
 }
 
 export interface TravelItinerary {
@@ -110,4 +112,5 @@ export interface TravelItinerary {
   days: ItineraryDay[];
   // Logo personalizado (opcional, por defecto Tresor Travel)
   logoUrl?: string;
+  coverImageUrl?: string;
 }
